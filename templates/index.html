@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Recaper</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="top">
+  <h1>Recaper</h1>
+  <p>Clean up a Teams transcript: one block per speaker turn, no timestamps, then translate it.</p>
+</header>
+
+<main>
+  <!-- 1. Upload and options -->
+  <section class="card">
+    <h2><span class="step">1</span> Transcript file</h2>
+    <label id="drop" class="drop">
+      <input type="file" id="file" accept=".txt,text/plain" hidden>
+      <span id="dropText">Drag and drop a .txt file here, or <u>browse</u></span>
+    </label>
+
+    <div class="row">
+      <div class="field">
+        <span class="label">Meeting type</span>
+        <div class="seg" id="type">
+          <button data-v="teams" class="on">Teams meeting</button>
+          <button data-v="hall">Hall meeting</button>
+          <button data-v="mixed">Mixed</button>
+        </div>
+      </div>
+      <div class="field">
+        <span class="label">Line breaks</span>
+        <div class="seg" id="format">
+          <button data-v="auto" class="on" title="Pack whole sentences into lines under 150 letters, breaking at a full stop where possible">Auto</button>
+          <button data-v="sentence" title="Each sentence on its own line">At each full stop</button>
+          <button data-v="fixed" title="Break every 150 letters at a word boundary">Every 150 letters</button>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="showTime"> Show the start time next to each speaker</label>
+      <label class="check"><input type="checkbox" id="dropFillers" checked> Drop fillers like “Um...”</label>
+    </div>
+    <button id="process" class="primary" disabled>Process transcript</button>
+    <span id="processMsg" class="msg"></span>
+  </section>
+
+  <!-- 2. Markpoints (hall / mixed) -->
+  <section class="card" id="markCard" hidden>
+    <h2><span class="step">2</span> Speaker changes</h2>
+    <p class="hint">These are the places where I think the microphone passed to someone else. Tick the ones that are right,
+      fix the names, and nudge a point with ◀ ▶ if it is one sentence off. Then build the transcript.</p>
+    <div id="idBox" class="idbox" hidden>
+      <span class="label">Speaker IDs that are hall microphones</span>
+      <div id="ids"></div>
+    </div>
+    <div class="row tools">
+      <input id="findText" placeholder="Add a speaker change: type a few words from where the new person starts">
+      <button id="addPoint">Add</button>
+      <span class="spacer"></span>
+      <label class="check"><input type="checkbox" id="showLow"> Show low-confidence suggestions</label>
+    </div>
+    <datalist id="nameList"></datalist>
+    <div class="tablewrap">
+      <table id="marks">
+        <thead><tr><th>Use</th><th>Time</th><th>Confidence</th><th>New speaker</th><th>Where it happens</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <button id="build" class="primary">Build transcript</button>
+  </section>
+
+  <!-- 3. Result -->
+  <section class="card" id="resultCard" hidden>
+    <h2><span class="step" id="resStep">3</span> Clean transcript <small id="resStats"></small></h2>
+    <textarea id="result" spellcheck="false"></textarea>
+    <div class="row">
+      <button id="copyRes">Copy</button>
+      <button id="dlRes">Download .txt</button>
+    </div>
+  </section>
+
+  <!-- 4. Translation -->
+  <section class="card" id="trCard" hidden>
+    <h2><span class="step" id="trStep">4</span> Translation</h2>
+    <div class="row">
+      <div class="field">
+        <span class="label">Service</span>
+        <select id="engine">
+          <option value="deepl" {{ "selected" if has_deepl else "disabled" }}>DeepL{{ "" if has_deepl else " (no key in API.txt)" }}</option>
+          <option value="ollama" {{ "" if has_ollama else "disabled" }} {{ "selected" if has_ollama and not has_deepl else "" }}>Ollama{{ "" if has_ollama else " (no key in API.txt)" }}</option>
+          <option value="google" {{ "" if has_deepl or has_ollama else "selected" }}>Google (free)</option>
+        </select>
+      </div>
+      <div class="field" id="modelField" hidden>
+        <span class="label">Ollama model</span>
+        <input id="model" list="modelList" value="{{ ollama_model }}" spellcheck="false">
+        <datalist id="modelList"></datalist>
+      </div>
+      <div class="field">
+        <span class="label">Translate to</span>
+        <select id="lang">
+          {% for code, name in languages %}<option value="{{ code }}">{{ name }}</option>{% endfor %}
+        </select>
+      </div>
+      <div class="field">
+        <span class="label">Text direction</span>
+        <div class="seg" id="dir">
+          <button data-v="rtl" class="on">Right to left</button>
+          <button data-v="ltr">Left to right</button>
+        </div>
+      </div>
+      <div class="field">
+        <span class="label">&nbsp;</span>
+        <label class="check"><input type="checkbox" id="trNames"> Translate speaker names too</label>
+      </div>
+    </div>
+    <button id="translate" class="primary">Translate</button>
+    <span id="trMsg" class="msg"></span>
+    <span id="usage" class="msg"></span>
+    <div class="progress" hidden><div id="trBar"></div></div>
+    <textarea id="trOut" dir="rtl" class="rtl" spellcheck="false" hidden></textarea>
+    <div class="row" id="trActions" hidden>
+      <button id="copyTr">Copy</button>
+      <button id="dlTr">Download .txt</button>
+    </div>
+  </section>
+</main>
+
+<script>
+  window.RECAPER = { rtlLangs: {{ rtl_langs|tojson }}, batch: {{ batch|tojson }}, hasDeepl: {{ has_deepl|tojson }}, hasOllama: {{ has_ollama|tojson }} };
+</script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+# Secrets: DeepL and Ollama keys
+API.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+ENV/
+
+# Uploaded and generated transcripts
+uploads/
+output/
+outputs/
+*.vtt
+*.srt
+*.docx
+*.txt
+!requirements.txt
+
+.env
+.DS_Store
+Thumbs.db

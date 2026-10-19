@@ -14,6 +14,15 @@ python app.py
 The browser opens at http://127.0.0.1:5000. Stop the app with Ctrl+C in the console window.
 Translation needs an internet connection; everything else works offline.
 
+## Free text mode
+
+Pick **Free text** as the mode to translate any text instead of a transcript. Paste it into the box
+(Ctrl+V or the "Paste from clipboard" button), choose the input language (Auto-detect by default) and the
+output language (Persian by default), and press Translate. It uses the same DeepL / Ollama / Google
+selector. The text is sent a few lines at a time, long paragraphs are cut at sentence ends, and the results
+are joined back in the original order with blank lines kept. Output in Persian, Arabic, Urdu, Hebrew or
+Pashto is shown right to left; the direction switch still works.
+
 ## What it does
 
 1. **Upload** a `.txt` transcript by drag and drop or the browse button.

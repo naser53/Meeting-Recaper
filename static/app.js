@@ -32,7 +32,11 @@
     a.click();
     URL.revokeObjectURL(a.href);
   }
-  function baseName() { return (state.fileName || "transcript").replace(/\.[^.]+$/, ""); }
+  function baseName() {
+    if (isFree()) return "Free text";
+    return (state.fileName || "transcript").replace(/\.[^.]+$/, "");
+  }
+  const isFree = () => state.type === "free";
   const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   function fmtTime(sec) {
     const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
@@ -71,7 +75,36 @@
     state.turns = null;
   }
 
-  seg("type", "type", () => { state.hallIds = null; resetBelow(); });
+  seg("type", "type", () => { state.hallIds = null; setMode(); });
+
+  // Free text mode: no file and no speaker steps, only the text box and the translation card.
+  function setMode() {
+    const free = isFree();
+    document.querySelectorAll(".transcript-only").forEach((el) => { el.hidden = free; });
+    document.querySelectorAll(".free-only").forEach((el) => { el.hidden = !free; });
+    $("inTitle").textContent = free ? "Text to translate" : "Transcript file";
+    resetBelow();
+    if (free) {
+      $("trStep").textContent = "2";
+      $("trCard").hidden = false;
+      freeStats();
+    }
+  }
+
+  function freeStats() {
+    const t = $("freeText").value;
+    $("freeStats").textContent = t.trim() ? `${t.length.toLocaleString()} characters, ${t.split("\n").length} lines` : "";
+  }
+  $("freeText").addEventListener("input", freeStats);
+  $("pasteFree").addEventListener("click", async () => {
+    try {
+      $("freeText").value = await navigator.clipboard.readText();
+      freeStats();
+    } catch {
+      $("freeStats").textContent = "The browser did not allow reading the clipboard. Click in the box and press Ctrl+V.";
+    }
+  });
+  $("clearFree").addEventListener("click", () => { $("freeText").value = ""; freeStats(); $("freeText").focus(); });
   seg("format", "format", () => state.turns && buildTranscript());
   $("showTime").addEventListener("change", () => state.turns && buildTranscript());
   $("dropFillers").addEventListener("change", () => state.turns && buildTranscript());
@@ -266,7 +299,70 @@
   $("engine").addEventListener("change", onEngine);
   onEngine();
 
-  async function translateAll() {
+  // a few lines per request, so no request is ever too long
+  function makeChunks(items, maxLines, maxChars) {
+    const chunks = [];
+    let cur = [], size = 0;
+    for (const it of items) {
+      const len = it.text.length + 1;
+      if (cur.length && (cur.length >= maxLines || size + len > maxChars)) { chunks.push(cur); cur = []; size = 0; }
+      cur.push(it); size += len;
+    }
+    if (cur.length) chunks.push(cur);
+    return chunks;
+  }
+
+  // A pasted paragraph can be longer than one request allows: cut it at sentence
+  // ends, or at spaces if one sentence is still too long.
+  function splitLong(text, max) {
+    if (text.length <= max) return [text];
+    const parts = [];
+    let cur = "";
+    const flush = () => { if (cur) parts.push(cur); cur = ""; };
+    for (let s of text.split(/(?<=[.!?؟。！？])\s+/)) {
+      if (cur && cur.length + 1 + s.length > max) flush();
+      while (s.length > max) {
+        let cut = s.lastIndexOf(" ", max);
+        if (cut < max / 2) cut = max;
+        parts.push(s.slice(0, cut).trim());
+        s = s.slice(cut).trim();
+      }
+      if (s) cur = cur ? cur + " " + s : s;
+    }
+    flush();
+    return parts.filter((p) => p);
+  }
+
+  function translateAll() { return isFree() ? translateFree() : translateTranscript(); }
+
+  // Send the chunks one after another and call put(item, translation) for each line.
+  async function runChunks(chunks, extra, put) {
+    const engine = $("engine").value;
+    for (let c = 0; c < chunks.length; c++) {
+      msg("trMsg", `Translating part ${c + 1} of ${chunks.length}…`);
+      const r = await post("/api/translate", { lines: chunks[c].map((x) => x.text), target: $("lang").value, engine, model: $("model").value, ...extra });
+      chunks[c].forEach((it, j) => put(it, r.lines[j] ?? it.text));
+      $("trBar").style.width = `${Math.round(((c + 1) / chunks.length) * 100)}%`;
+    }
+  }
+
+  async function translateFree() {
+    const lines = $("freeText").value.replace(/\r/g, "").split("\n");
+    if (!lines.some((l) => l.trim())) { msg("trMsg", "Paste some text first.", true); return; }
+    const { lines: maxLines, chars: maxChars } = window.RECAPER.batch[$("engine").value];
+    const items = []; // {li, pi, text}: line li, piece pi of that line
+    const out = lines.map((l) => (l.trim() ? splitLong(l, maxChars) : [l]));
+    out.forEach((pieces, li) => {
+      if (lines[li].trim()) pieces.forEach((p, pi) => items.push({ li, pi, text: p }));
+    });
+    const chunks = makeChunks(items, maxLines, maxChars);
+    await withProgress(chunks, async () => {
+      await runChunks(chunks, { source: $("srcLang").value }, (it, v) => { out[it.li][it.pi] = v; });
+      return out.map((pieces) => pieces.join(" ")).join("\n");
+    });
+  }
+
+  async function translateTranscript() {
     // Use the transcript as shown, so hand edits in the result box are kept.
     const turns = parseResult($("result").value);
     if (!turns.length) return;
@@ -276,35 +372,23 @@
       if (withNames) items.push({ t: ti, k: -1, text: t.header });
       t.lines.forEach((l, li) => items.push({ t: ti, k: li, text: l }));
     });
+    const { lines: maxLines, chars: maxChars } = window.RECAPER.batch[$("engine").value];
+    const chunks = makeChunks(items, maxLines, maxChars);
+    const out = turns.map((t) => ({ header: t.header, lines: t.lines.slice() }));
+    await withProgress(chunks, async () => {
+      await runChunks(chunks, {}, (it, v) => { if (it.k === -1) out[it.t].header = v; else out[it.t].lines[it.k] = v; });
+      return out.map((t) => t.header + "\n" + t.lines.join("\n")).join("\n\n") + "\n";
+    });
+  }
 
-    // a few lines per request, so no request is ever too long
+  async function withProgress(chunks, work) {
     const engine = $("engine").value;
-    const { lines: maxLines, chars: maxChars } = window.RECAPER.batch[engine];
-    const chunks = [];
-    let cur = [], size = 0;
-    for (const it of items) {
-      const len = it.text.length + 1;
-      if (cur.length && (cur.length >= maxLines || size + len > maxChars)) { chunks.push(cur); cur = []; size = 0; }
-      cur.push(it); size += len;
-    }
-    if (cur.length) chunks.push(cur);
-
     const btn = $("translate");
     btn.disabled = true;
     document.querySelector(".progress").hidden = false;
     $("trBar").style.width = "0";
-    const out = turns.map((t) => ({ header: t.header, lines: t.lines.slice() }));
     try {
-      for (let c = 0; c < chunks.length; c++) {
-        msg("trMsg", `Translating part ${c + 1} of ${chunks.length}…`);
-        const r = await post("/api/translate", { lines: chunks[c].map((x) => x.text), target: $("lang").value, engine, model: $("model").value });
-        chunks[c].forEach((it, j) => {
-          const v = r.lines[j] ?? it.text;
-          if (it.k === -1) out[it.t].header = v; else out[it.t].lines[it.k] = v;
-        });
-        $("trBar").style.width = `${Math.round(((c + 1) / chunks.length) * 100)}%`;
-      }
-      $("trOut").value = out.map((t) => t.header + "\n" + t.lines.join("\n")).join("\n\n") + "\n";
+      $("trOut").value = await work();
       $("trOut").hidden = false;
       $("trActions").hidden = false;
       msg("trMsg", `Done, ${chunks.length} part(s).`);

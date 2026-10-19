@@ -1,4 +1,4 @@
-"""Recaper: clean up Microsoft Teams transcripts and translate them.
+"""Recaper: clean up Microsoft Teams transcripts and translate them, or translate free text.
 
 Run:  python app.py   then open http://127.0.0.1:5000
 """
@@ -38,10 +38,14 @@ LANGUAGES = [
     ("fr", "French"), ("de", "German"), ("es", "Spanish"), ("it", "Italian"),
     ("ru", "Russian"), ("zh-CN", "Chinese (Simplified)"), ("hi", "Hindi"), ("ur", "Urdu"),
     ("iw", "Hebrew"), ("ja", "Japanese"), ("ko", "Korean"), ("pt", "Portuguese"), ("nl", "Dutch"),
+    ("ps", "Pashto"), ("pl", "Polish"), ("sv", "Swedish"), ("uk", "Ukrainian"), ("el", "Greek"),
+    ("id", "Indonesian"), ("vi", "Vietnamese"),
 ]
 RTL_LANGS = ["fa", "ar", "ur", "iw", "ps", "ku"]
 # DeepL uses its own codes for a few languages
 DEEPL_CODES = {"en": "EN-US", "pt": "PT-PT", "zh-CN": "ZH-HANS", "iw": "HE"}
+# source languages take no variant
+DEEPL_SOURCE_CODES = {"zh-CN": "ZH", "iw": "HE"}
 
 
 @app.route("/")
@@ -123,11 +127,13 @@ def deepl_call(key, path, payload=None):
         return e.code, e.read().decode("utf-8", errors="replace")
 
 
-def translate_deepl(lines, target):
+def translate_deepl(lines, target, source=None):
     key = deepl_key()
     if not key:
         raise RuntimeError(f'No "DeepL API Key:" line found in {API_FILE.name}.')
     payload = {"text": lines, "target_lang": DEEPL_CODES.get(target, target).upper()}
+    if source and source != "auto":
+        payload["source_lang"] = DEEPL_SOURCE_CODES.get(source, source).upper()
     for attempt in range(4):
         status, body = deepl_call(key, "translate", payload)
         if status in (429, 500, 502, 503, 504) and attempt < 3:
@@ -207,10 +213,20 @@ OLLAMA_SCHEMA = {
 }
 
 
-def _ollama_batch(lines, language, model):
+def language_name(code):
+    return dict(LANGUAGES).get(code, code).split(" (")[0]
+
+
+def _ollama_batch(lines, language, model, source=None):
     numbered = "\n".join(f"{i + 1}. {l}" for i, l in enumerate(lines))
+    if source is None:  # transcript mode
+        what = "meeting transcript lines from English"
+    elif source == "auto":
+        what = "text lines from the language they are written in"
+    else:
+        what = f"text lines from {language_name(source)}"
     system = (
-        f"You are a professional translator. Translate meeting transcript lines from English into {language}. "
+        f"You are a professional translator. Translate {what} into {language}. "
         "Keep the meaning, tone and names; write natural, fluent text. "
         f'Answer only with JSON: {{"translations": [...]}} holding exactly {len(lines)} strings, '
         "one translated line for each numbered input line, in the same order, without the numbers. "
@@ -240,12 +256,12 @@ def _ollama_batch(lines, language, model):
     return None
 
 
-def translate_ollama(lines, target, model):
-    language = dict(LANGUAGES).get(target, target).split(" (")[0]
+def translate_ollama(lines, target, model, source=None):
+    language = language_name(target)
     model = (model or api_value("Ollama Model") or OLLAMA_DEFAULT_MODEL).strip()
 
     def run(part):
-        out = _ollama_batch(part, language, model)
+        out = _ollama_batch(part, language, model, source)
         if out is not None:
             return out
         if len(part) == 1:
@@ -277,13 +293,13 @@ def _translate_one(translator, text):
             time.sleep(1.5 * (attempt + 1))
 
 
-def translate_google(lines, target):
+def translate_google(lines, target, source=None):
     try:
         from deep_translator import GoogleTranslator
     except ModuleNotFoundError:
         raise RuntimeError("Google needs the deep-translator package: python -m pip install deep-translator")
 
-    translator = GoogleTranslator(source="auto", target=target)
+    translator = GoogleTranslator(source=source or "auto", target=target)
 
     def run(part):
         if len(part) == 1:
@@ -300,10 +316,12 @@ def translate_google(lines, target):
 
 @app.post("/api/translate")
 def translate():
-    """Translate one batch of lines; the page sends the transcript batch by batch."""
+    """Translate one batch of lines; the page sends the text batch by batch.
+    "source" is sent only in free text mode: a language code or "auto"."""
     data = request.get_json(force=True)
     lines = data.get("lines") or []
     target = data.get("target", "fa")
+    source = data.get("source") or None
     engine = data.get("engine", "deepl")
     limit = BATCH.get(engine, BATCH["google"])
     if len(lines) > limit["lines"] or (len(lines) > 1 and sum(len(l) + 1 for l in lines) > limit["chars"] + 500):
@@ -312,11 +330,11 @@ def translate():
         return jsonify(lines=[])
     try:
         if engine == "deepl":
-            out = translate_deepl(lines, target)
+            out = translate_deepl(lines, target, source)
         elif engine == "ollama":
-            out = translate_ollama(lines, target, data.get("model"))
+            out = translate_ollama(lines, target, data.get("model"), source)
         else:
-            out = translate_google(lines, target)
+            out = translate_google(lines, target, source)
     except Exception as exc:
         return jsonify(error=f"Translation failed: {exc}"), 502
     return jsonify(lines=out)

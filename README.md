@@ -43,7 +43,7 @@ Pashto is shown right to left; the direction switch still works.
 5. **Output**: speaker name on one line, the content below, a blank line between speakers. Timestamps and the
    extra lines Teams adds (avatar initials, "47 minutes 13 seconds47:13") are removed. Tick
    "Show the start time" if you want it next to the name.
-6. **Translate** (appears once the transcript is built): DeepL by default, Persian by default, right to left,
+6. **Translate** (appears once the transcript is built): Ollama by default (DeepL when there is no Ollama key), Persian by default, right to left,
    with a switch for left to right. The transcript is sent 20 lines at a time and the results are joined back
    together in order, so long meetings are never too large for one request. Edits you make in the clean
    transcript box are included. The page also shows how much of the monthly DeepL quota is used.

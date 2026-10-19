@@ -23,6 +23,14 @@ selector. The text is sent a few lines at a time, long paragraphs are cut at sen
 are joined back in the original order with blank lines kept. Output in Persian, Arabic, Urdu, Hebrew or
 Pashto is shown right to left; the direction switch still works.
 
+## Summary
+
+Once a translation is done, in every mode, a **Summary** button appears. It sends the original text (the
+clean transcript or the free text) to Ollama and shows a short, useful summary in its own box, written in the
+"Translate to" language: an overview, the key points, and for meetings the decisions and action items with
+their owners. Texts longer than about 30,000 letters are noted part by part and then summarised as a whole.
+The summary always uses Ollama, with the model in the Ollama model box (or the default).
+
 ## What it does
 
 1. **Upload** a `.txt` transcript by drag and drop or the browse button.

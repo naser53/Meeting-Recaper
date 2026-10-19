@@ -314,6 +314,87 @@ def translate_google(lines, target, source=None):
     return run(lines)
 
 
+# ------------------------------------------------------------ Summary (Ollama)
+
+SUMMARY_PART = 30000  # characters per request; longer texts are summarised part by part
+
+
+def _ollama_text(system, user, model):
+    res = ollama_call("/api/chat", {
+        "model": model,
+        "stream": False,
+        "options": {"temperature": 0.3},
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+    }, timeout=600)
+    out = re.sub(r"[ 	]+$", "", ((res.get("message") or {}).get("content") or "").strip(), flags=re.M)
+    if not out:
+        raise RuntimeError("Ollama returned an empty summary. Try another model.")
+    return out
+
+
+def split_parts(text, size=SUMMARY_PART):
+    """Cut text into parts of about `size` characters at blank lines, then at line ends."""
+    parts, cur = [], ""
+    for block in re.split(r"(\n\s*\n)", text):
+        while len(block) > size:
+            cut = block.rfind("\n", 0, size)
+            cut = cut if cut > size // 2 else size
+            if cur:
+                parts.append(cur)
+                cur = ""
+            parts.append(block[:cut])
+            block = block[cut:]
+        if cur and len(cur) + len(block) > size:
+            parts.append(cur)
+            cur = ""
+        cur += block
+    if cur.strip():
+        parts.append(cur)
+    return [p for p in parts if p.strip()]
+
+
+def summarize(text, target, model, kind):
+    language = language_name(target)
+    model = (model or api_value("Ollama Model") or OLLAMA_DEFAULT_MODEL).strip()
+    what = "a meeting transcript (speaker name on one line, what they said below)" if kind == "transcript" else "a text"
+    shape = (
+        "Start with a short overview paragraph. Then list the key points as bullets (- ). "
+        + ("Then, if there are any, list decisions and action items with who owns them. " if kind == "transcript" else "")
+        + "Keep only what matters: no filler, no repetition, nothing that is not in the source. "
+        f"Write the whole summary in {language}, as plain text without Markdown headings or bold."
+    )
+    parts = split_parts(text)
+    if len(parts) == 1:
+        return _ollama_text(f"You write clear, useful summaries. Summarise {what}. {shape}", text, model)
+    # long text: note the points of each part, then summarise those notes
+    notes = [
+        _ollama_text(
+            f"You take notes for a summary. This is part {i + 1} of {len(parts)} of {what}. "
+            "List every important point, decision and action item in this part as short bullets in English.",
+            part, model)
+        for i, part in enumerate(parts)
+    ]
+    return _ollama_text(
+        f"You write clear, useful summaries. These are notes taken part by part from {what}. "
+        f"Turn them into one summary of the whole. {shape}",
+        "\n\n".join(notes), model)
+
+
+@app.post("/api/summarize")
+def summarize_route():
+    data = request.get_json(force=True)
+    text = (data.get("text") or "").strip()
+    if not text:
+        return jsonify(error="There is no text to summarise."), 400
+    if not ollama_ready():
+        return jsonify(error=f'The summary uses Ollama. Add an "Ollama API Key:" line to {API_FILE.name}.'), 400
+    try:
+        out = summarize(text, data.get("target", "fa"), data.get("model"), data.get("kind", "text"))
+    except Exception as exc:
+        return jsonify(error=f"Summary failed: {exc}"), 502
+    return jsonify(summary=out, parts=len(split_parts(text)))
+
+
 @app.post("/api/translate")
 def translate():
     """Translate one batch of lines; the page sends the text batch by batch.

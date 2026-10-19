@@ -146,6 +146,18 @@
       <button id="copyTr">Copy</button>
       <button id="dlTr">Download .txt</button>
     </div>
+    <button id="summarize" class="primary" hidden title="A short, useful summary of the whole text in the language above, written by Ollama">Summary</button>
+    <span id="sumMsg" class="msg"></span>
+  </section>
+
+  <!-- 5. Summary -->
+  <section class="card" id="sumCard" hidden>
+    <h2><span class="step" id="sumStep">5</span> Summary</h2>
+    <textarea id="sumOut" class="summary rtl" dir="rtl" spellcheck="false"></textarea>
+    <div class="row">
+      <button id="copySum">Copy</button>
+      <button id="dlSum">Download .txt</button>
+    </div>
   </section>
 </main>
 

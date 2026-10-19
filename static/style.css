@@ -21,6 +21,7 @@ h2 { margin: 0 0 12px; font-size: 18px; display: flex; align-items: center; gap:
 h2 small { color: var(--muted); font-weight: 400; font-size: 13px; }
 .step { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--soft); color: var(--accent); font-size: 14px; }
 .mode { margin-bottom: 14px; align-items: flex-start; }
+textarea.summary { min-height: 260px; }
 #freeText { min-height: 300px; font-family: Vazirmatn, "Segoe UI", sans-serif; font-size: 15px; line-height: 1.8; }
 .drop { display: block; border: 2px dashed var(--line); border-radius: 10px; padding: 28px; text-align: center; color: var(--muted); cursor: pointer; transition: .15s; }
 .drop:hover, .drop.over { border-color: var(--accent); background: var(--soft); color: var(--ink); }

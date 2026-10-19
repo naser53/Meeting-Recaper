@@ -72,6 +72,7 @@
 
   function resetBelow() {
     $("markCard").hidden = true; $("resultCard").hidden = true; $("trCard").hidden = true;
+    $("sumCard").hidden = true; $("summarize").hidden = true; msg("sumMsg", "");
     state.turns = null;
   }
 
@@ -263,10 +264,11 @@
   // ---------- 4. translation
   seg("dir", "dir", (v) => applyDir(v));
   function applyDir(v) {
-    const t = $("trOut");
-    t.dir = v;
-    t.classList.toggle("rtl", v === "rtl");
-    t.classList.toggle("ltr", v === "ltr");
+    for (const t of [$("trOut"), $("sumOut")]) {
+      t.dir = v;
+      t.classList.toggle("rtl", v === "rtl");
+      t.classList.toggle("ltr", v === "ltr");
+    }
   }
   $("lang").addEventListener("change", () => {
     const v = window.RECAPER.rtlLangs.includes($("lang").value) ? "rtl" : "ltr";
@@ -391,6 +393,7 @@
       $("trOut").value = await work();
       $("trOut").hidden = false;
       $("trActions").hidden = false;
+      $("summarize").hidden = false;
       msg("trMsg", `Done, ${chunks.length} part(s).`);
       if (engine === "deepl") showUsage();
     } catch (e) {
@@ -408,4 +411,26 @@
 
   $("copyTr").addEventListener("click", () => navigator.clipboard.writeText($("trOut").value));
   $("dlTr").addEventListener("click", () => download(`${baseName()} - ${$("lang").value}.txt`, $("trOut").value));
+
+  // ---------- 5. summary: the gist of the original text, written by Ollama in the output language
+  $("summarize").addEventListener("click", async () => {
+    const text = isFree() ? $("freeText").value : $("result").value;
+    const btn = $("summarize");
+    btn.disabled = true;
+    msg("sumMsg", "Writing the summary… a long text can take a few minutes.");
+    try {
+      const r = await post("/api/summarize", { text, target: $("lang").value, model: $("model").value, kind: isFree() ? "text" : "transcript" });
+      $("sumOut").value = r.summary;
+      $("sumStep").textContent = String(+$("trStep").textContent + 1);
+      $("sumCard").hidden = false;
+      msg("sumMsg", r.parts > 1 ? `Done, summarised in ${r.parts} parts.` : "Done.");
+      $("sumCard").scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch (e) {
+      msg("sumMsg", e.message, true);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+  $("copySum").addEventListener("click", () => navigator.clipboard.writeText($("sumOut").value));
+  $("dlSum").addEventListener("click", () => download(`${baseName()} - summary - ${$("lang").value}.txt`, $("sumOut").value));
 })();
